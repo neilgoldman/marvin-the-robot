@@ -6,6 +6,7 @@ import itertools
 import requests
 import re
 from datetime import datetime
+import os
 
 """
 A lot of the code and library choices are from
@@ -41,6 +42,7 @@ class Marvin:
 		Marvin._heard_name = True
 		Marvin._time_heard_name = datetime.now()
 		print('I heard my name!\n')
+		os.system("xset dpms force on")
 	
 	@staticmethod
 	def check_if_still_listening():
@@ -62,11 +64,11 @@ def speak(text):
 	speech_engine.runAndWait()
 
 def listen(mic, recognizer=speech_recognition.Recognizer()):
-	stop_callback = custom_listen_in_background(recognizer, mic, recognize_async)
+	stop_callback = custom_listen_in_background(recognizer, mic, recognize_and_respond)
 	print('Listening.')
 	return stop_callback
 
-def recognize_async(recognizer, audio_data):
+def recognize_and_respond(recognizer, audio_data):
 	print('Recognizer callback')
 	decoder = recognize_sync(recognizer, audio_data, show_all=True)
 	possible_keywords = []
@@ -97,10 +99,10 @@ def recognize_async(recognizer, audio_data):
 	off_count = possible_keywords.count(' off ')
 	toggle_count = sum(map(possible_keywords.count, (' get' , ' hit ', ' switch ', ' toggle ')))
 	
-	print(possible_keywords)
-	print(on_count)
-	print(off_count)
-	print(toggle_count)
+	# print(possible_keywords)
+	# print(on_count)
+	# print(off_count)
+	# print(toggle_count)
 	
 	if (on_count + off_count + toggle_count) < 3:
 		return
@@ -142,11 +144,14 @@ def custom_listen_in_background(recognizer, source, callback):
 		with source as s:
 			while running[0]:
 				try: # listen for 1 second, then check again if the stop function has been called
-					audio = recognizer.listen(s, 3)
+					print('Listening')
+					audio = recognizer.listen(s, 1)
 				except WaitTimeoutError: # listening timed out, just try again
 					print('Adjusting for ambient noise')
 					recognizer.adjust_for_ambient_noise(s, duration=0.5)
-					recognizer.energy_threshold = recognizer.energy_threshold - (recognizer.energy_threshold * 0.35)
+					recognizer.energy_threshold = recognizer.energy_threshold - (recognizer.energy_threshold * 0.25)
+					if not Marvin.check_if_still_listening():
+						os.system("xset dpms force off")
 					print(recognizer.energy_threshold)
 				else:
 					if running[0]: callback(recognizer, audio)
@@ -162,16 +167,16 @@ def custom_listen_in_background(recognizer, source, callback):
 def main():
 	Marvin.compile_match_words()
 	print('Opening Microphone')
-	mic = find_microphone(sample_rate=32000, chunk_size=1024)
+	mic = find_microphone(sample_rate=16000, chunk_size=2048)
 	print('Loading Recognizer')
 	recognizer = speech_recognition.Recognizer()
-	recognizer.energy_threshold = 100
+	recognizer.energy_threshold = 1000
 	recognizer.dynamic_energy_threshold = True
 	recognizer.dynamic_energy_adjustment_damping = 0.2
-	recognizer.dynamic_energy_adjustment_ratio = 1.2
-	recognizer.pause_threshold = 0.3
-	recognizer.non_speaking_duration = 0.2
-	recognizer.num_n_best = 40
+	recognizer.dynamic_energy_adjustment_ratio = 1.3
+	recognizer.pause_threshold = 0.2
+	recognizer.non_speaking_duration = 0.1
+	recognizer.num_n_best = 20
 
 	print('Streaming from Microphone.')
 	stop_listening= listen(mic, recognizer=recognizer)
