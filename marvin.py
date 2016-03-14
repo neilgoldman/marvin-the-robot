@@ -3,8 +3,8 @@ from speech_recognition import AudioSource, AudioData, WaitTimeoutError
 import pyttsx
 import requests
 from datetime import datetime
-import re, threading
-import os, math, collections, audioop, itertools
+import threading, multiprocessing
+import os, math, collections, audioop, itertools, re
 
 """
 A lot of the code and library choices are from
@@ -40,7 +40,7 @@ class Marvin:
 		Marvin._heard_name = True
 		Marvin._time_heard_name = datetime.now()
 		print('I heard my name!\n')
-		os.system("xset dpms force on")
+		# os.system("xset dpms force on")
 	
 	@staticmethod
 	def check_if_still_listening():
@@ -79,8 +79,8 @@ def recognize_and_respond(recognizer, audio_data):
 		if not words:
 			print('no words found')
 			break
-		# print(words)
-		if any(name in words for name in ('arvin', 'artin', 'marlin', 'marten', 'margaret')):
+		print(words)
+		if any(name in words for name in ('arvin', 'artin', 'marlin', 'marten', 'margaret', 'why are')):
 			heard_marvin = True
 		for match_re in match_words:
 			m = match_re.match(words)
@@ -135,91 +135,99 @@ def recognize_sync(recognizer, audio_data, show_all=False):
 		return None
 
 def custom_listen(self, source, timeout = None):
-        """
-        Records a single phrase from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance, which it returns.
-        This is done by waiting until the audio has an energy above ``recognizer_instance.energy_threshold`` (the user has started speaking), and then recording until it encounters ``recognizer_instance.pause_threshold`` seconds of non-speaking or there is no more audio input. The ending silence is not included.
-        The ``timeout`` parameter is the maximum number of seconds that it will wait for a phrase to start before giving up and throwing an ``speech_recognition.WaitTimeoutError`` exception. If ``timeout`` is ``None``, it will wait indefinitely.
-        """
-        assert isinstance(source, AudioSource), "Source must be an audio source"
-        assert source.stream is not None, "Audio source must be opened before recording - see documentation for `AudioSource`"
-        assert self.pause_threshold >= self.non_speaking_duration >= 0
+		"""
+		Records a single phrase from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance, which it returns.
+		This is done by waiting until the audio has an energy above ``recognizer_instance.energy_threshold`` (the user has started speaking), and then recording until it encounters ``recognizer_instance.pause_threshold`` seconds of non-speaking or there is no more audio input. The ending silence is not included.
+		The ``timeout`` parameter is the maximum number of seconds that it will wait for a phrase to start before giving up and throwing an ``speech_recognition.WaitTimeoutError`` exception. If ``timeout`` is ``None``, it will wait indefinitely.
+		"""
+		assert isinstance(source, AudioSource), "Source must be an audio source"
+		assert source.stream is not None, "Audio source must be opened before recording - see documentation for `AudioSource`"
+		assert self.pause_threshold >= self.non_speaking_duration >= 0
 
-        seconds_per_buffer = (source.CHUNK + 0.0) / source.SAMPLE_RATE
-        pause_buffer_count = int(math.ceil(self.pause_threshold / seconds_per_buffer)) # number of buffers of non-speaking audio before the phrase is complete
-        phrase_buffer_count = int(math.ceil(self.phrase_threshold / seconds_per_buffer)) # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
-        non_speaking_buffer_count = int(math.ceil(self.non_speaking_duration / seconds_per_buffer)) # maximum number of buffers of non-speaking audio to retain before and after
+		seconds_per_buffer = (source.CHUNK + 0.0) / source.SAMPLE_RATE
+		pause_buffer_count = int(math.ceil(self.pause_threshold / seconds_per_buffer)) # number of buffers of non-speaking audio before the phrase is complete
+		phrase_buffer_count = int(math.ceil(self.phrase_threshold / seconds_per_buffer)) # minimum number of buffers of speaking audio before we consider the speaking audio a phrase
+		non_speaking_buffer_count = int(math.ceil(self.non_speaking_duration / seconds_per_buffer)) # maximum number of buffers of non-speaking audio to retain before and after
 
-        # read audio input for phrases until there is a phrase that is long enough
-        elapsed_time = 0 # number of seconds of audio read
-        while True:
-            frames = collections.deque()
+		# read audio input for phrases until there is a phrase that is long enough
+		elapsed_time = 0 # number of seconds of audio read
+		while True:
+			frames = collections.deque()
 
-            # store audio input until the phrase starts
-            while True:
-                elapsed_time += seconds_per_buffer
-                if timeout and elapsed_time > timeout: # handle timeout if specified
-                    raise WaitTimeoutError("listening timed out")
+			# store audio input until the phrase starts
+			while True:
+				elapsed_time += seconds_per_buffer
+				if timeout and elapsed_time > timeout: # handle timeout if specified
+					raise WaitTimeoutError("listening timed out")
 
-                buffer = source.stream.read(source.CHUNK)
-                if len(buffer) == 0: break # reached end of the stream
-                frames.append(buffer)
-                if len(frames) > non_speaking_buffer_count: # ensure we only keep the needed amount of non-speaking buffers
-                    frames.popleft()
+				buffer = source.stream.read(source.CHUNK)
+				if len(buffer) == 0: break # reached end of the stream
+				frames.append(buffer)
+				if len(frames) > non_speaking_buffer_count: # ensure we only keep the needed amount of non-speaking buffers
+					frames.popleft()
 
-                # detect whether speaking has started on audio input
-                energy = audioop.rms(buffer, source.SAMPLE_WIDTH) # energy of the audio signal
-                if energy > self.energy_threshold: break
+				# detect whether speaking has started on audio input
+				energy = audioop.rms(buffer, source.SAMPLE_WIDTH) # energy of the audio signal
+				if energy > self.energy_threshold:
+					break
 
-                # dynamically adjust the energy threshold using assymmetric weighted average
-                if self.dynamic_energy_threshold:
-                    damping = self.dynamic_energy_adjustment_damping ** seconds_per_buffer # account for different chunk sizes and rates
-                    target_energy = energy * self.dynamic_energy_ratio
-                    self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
+				# dynamically adjust the energy threshold using assymmetric weighted average
+				if self.dynamic_energy_threshold:
+					damping = self.dynamic_energy_adjustment_damping ** seconds_per_buffer # account for different chunk sizes and rates
+					target_energy = energy * self.dynamic_energy_ratio
+					self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
 
-            # read audio input until the phrase ends
-            pause_count, phrase_count = 0, 0
-            while True:
-                elapsed_time += seconds_per_buffer
+			# read audio input until the phrase ends
+			pause_count, phrase_count = 0, 0
+			while True:
+				elapsed_time += seconds_per_buffer
 
-                buffer = source.stream.read(source.CHUNK)
-                if len(buffer) == 0: break # reached end of the stream
-                frames.append(buffer)
-                phrase_count += 1
+				buffer = source.stream.read(source.CHUNK)
+				if len(buffer) == 0: break # reached end of the stream
+				frames.append(buffer)
+				phrase_count += 1
 
-                # check if speaking has stopped for longer than the pause threshold on the audio input
-                energy = audioop.rms(buffer, source.SAMPLE_WIDTH) # energy of the audio signal
-                if energy > self.energy_threshold:
-                    pause_count = 0
-                else:
-                    pause_count += 1
-                if pause_count > pause_buffer_count: # end of the phrase
-                    break
+				# check if speaking has stopped for longer than the pause threshold on the audio input
+				energy = audioop.rms(buffer, source.SAMPLE_WIDTH) # energy of the audio signal
+				if energy > self.energy_threshold:
+					pause_count = 0
+				else:
+					pause_count += 1
+				if pause_count > pause_buffer_count: # end of the phrase
+					break
 
-            # check how long the detected phrase is, and retry listening if the phrase is too short
-            phrase_count -= pause_count
-            if phrase_count >= phrase_buffer_count: break # phrase is long enough, stop listening
+			# check how long the detected phrase is, and retry listening if the phrase is too short
+			phrase_count -= pause_count
+			break
+			# if phrase_count >= phrase_buffer_count: break # phrase is long enough, stop listening
 
-        # obtain frame data
-        for i in range(pause_count - non_speaking_buffer_count): frames.pop() # remove extra non-speaking frames at the end
-        frame_data = b"".join(list(frames))
+		# obtain frame data
+		for i in range(pause_count - non_speaking_buffer_count): frames.pop() # remove extra non-speaking frames at the end
+		frame_data = b"".join(list(frames))
 
-        return AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+		return AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
 
 def custom_listen_in_background(recognizer, source, callback):
 	assert isinstance(source, AudioSource), "Source must be an audio source"
 	running = [True]
 	def threaded_listen():
 		with source as s:
+			listen_count = 0
 			while running[0]:
 				try: # listen for 1 second, then check again if the stop function has been called
 					print('Listening')
+					listen_count += 1
+					if listen_count >= 5:
+						print('Adjusting for ambient noise')
+						recognizer.adjust_for_ambient_noise(s, duration=0.5)
+						listen_count = 0
 					audio = custom_listen(recognizer, s, timeout=1.0)
 				except WaitTimeoutError: # listening timed out, just try again
 					print('Adjusting for ambient noise')
 					recognizer.adjust_for_ambient_noise(s, duration=0.5)
-					recognizer.energy_threshold = recognizer.energy_threshold - (recognizer.energy_threshold * 0.2)
-					if not Marvin.check_if_still_listening():
-						os.system("xset dpms force off")
+					recognizer.energy_threshold = recognizer.energy_threshold - (recognizer.energy_threshold * 0.1)
+					# if not Marvin.check_if_still_listening():
+						# os.system("xset dpms force off")
 					print(recognizer.energy_threshold)
 				else:
 					if running[0]: callback(recognizer, audio)
@@ -235,16 +243,20 @@ def custom_listen_in_background(recognizer, source, callback):
 def main():
 	Marvin.compile_match_words()
 	print('Opening Microphone')
-	mic = find_microphone(sample_rate=16000, chunk_size=2048)
+	mic = find_microphone(sample_rate=16000, chunk_size=1024)
 	print('Loading Recognizer')
 	recognizer = speech_recognition.Recognizer()
-	recognizer.energy_threshold = 1000
+	recognizer.energy_threshold = 3000
 	recognizer.dynamic_energy_threshold = True
-	recognizer.dynamic_energy_adjustment_damping = 0.2
-	recognizer.dynamic_energy_adjustment_ratio = 1.3
+	recognizer.dynamic_energy_adjustment_damping = 0.3
+	recognizer.dynamic_energy_adjustment_ratio = 1.8
 	recognizer.pause_threshold = 0.2
 	recognizer.non_speaking_duration = 0.1
-	recognizer.num_n_best = 20
+	
+	recognizer.num_n_best = 30
+	recognizer.timeout_buffers = 4
+	recognizer.max_duration = 3
+	
 
 	print('Streaming from Microphone.')
 	stop_listening= listen(mic, recognizer=recognizer)
