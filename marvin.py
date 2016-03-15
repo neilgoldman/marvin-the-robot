@@ -3,7 +3,8 @@ from speech_recognition import AudioSource, AudioData, WaitTimeoutError
 import pyttsx
 import requests
 from datetime import datetime
-import threading, multiprocessing
+from multiprocessing import Process
+import threading
 import os, math, collections, audioop, itertools, re
 
 """
@@ -77,9 +78,9 @@ def recognize_and_respond(recognizer, audio_data):
 	for best in itertools.islice(decoder.nbest(), 0, recognizer.num_n_best):
 		words = best.hypstr
 		if not words:
-			print('no words found')
+			# print('no words found')
 			break
-		print(words)
+		# print(words)
 		if any(name in words for name in ('arvin', 'artin', 'marlin', 'marten', 'margaret', 'why are')):
 			heard_marvin = True
 		for match_re in match_words:
@@ -220,12 +221,13 @@ def custom_listen_in_background(recognizer, source, callback):
 					if listen_count >= 5:
 						print('Adjusting for ambient noise')
 						recognizer.adjust_for_ambient_noise(s, duration=0.5)
+						recognizer.energy_threshold = recognizer.energy_threshold - (recognizer.energy_threshold * 0.1)
 						listen_count = 0
-					audio = custom_listen(recognizer, s, timeout=1.0)
+						print(recognizer.energy_threshold)
+					audio = custom_listen(recognizer, s, timeout=5.0)
 				except WaitTimeoutError: # listening timed out, just try again
 					print('Adjusting for ambient noise')
-					recognizer.adjust_for_ambient_noise(s, duration=0.5)
-					recognizer.energy_threshold = recognizer.energy_threshold - (recognizer.energy_threshold * 0.1)
+					recognizer.adjust_for_ambient_noise(s, duration=2)
 					# if not Marvin.check_if_still_listening():
 						# os.system("xset dpms force off")
 					print(recognizer.energy_threshold)
@@ -241,9 +243,21 @@ def custom_listen_in_background(recognizer, source, callback):
 	
 
 def main():
+	p = Process(target=unsafe_main)
+	try:
+		while True:
+			print("Starting Speech Processing in seperate process.")
+			p.start()
+			p.join()
+			print("Speech Processing Process ended. {}".format(p.exitcode))
+	except KeyboardInterrupt:
+		p.terminate()
+		
+
+def unsafe_main():
 	Marvin.compile_match_words()
 	print('Opening Microphone')
-	mic = find_microphone(sample_rate=16000, chunk_size=1024)
+	mic = find_microphone(sample_rate=16000, chunk_size=512)
 	print('Loading Recognizer')
 	recognizer = speech_recognition.Recognizer()
 	recognizer.energy_threshold = 3000
@@ -253,21 +267,21 @@ def main():
 	recognizer.pause_threshold = 0.2
 	recognizer.non_speaking_duration = 0.1
 	
-	recognizer.num_n_best = 30
+	recognizer.num_n_best = 50
 	recognizer.timeout_buffers = 4
 	recognizer.max_duration = 3
 	
 
 	print('Streaming from Microphone.')
-	stop_listening= listen(mic, recognizer=recognizer)
+	stop_listening = listen(mic, recognizer=recognizer)
 	from time import sleep
 	try:
 		while True:
 			sleep(1)
-	except KeyboardInterrupt:
+	except (KeyboardInterrupt, Exception) as e:
 		print('Handling quit command')
 		stop_listening()
-		exit()
+		return 0
 
 
 if __name__ == '__main__':
